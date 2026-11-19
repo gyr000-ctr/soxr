@@ -60,3 +60,6 @@ if (NOT CMAKE_CROSSCOMPILING)
 endif ()
 
 add_test (1-delay-clear ${BIN}1-delay-clear)
+
+# Packed 24-bit I/O; self-contained (needs no .s32 vectors) and quick:
+add_test (2-int24 ${BIN}test_int24)

@@ -177,13 +177,41 @@ soxr_runtime_spec_t soxr_runtime_spec(unsigned num_threads)
 
 
 
+/* A datatype is valid iff, ignoring the channel-arrangement bit, it is one
+ * of the defined sample-types: this admits 0..7 (the original datatypes)
+ * plus 8 and 12 (SOXR_INT24_I and SOXR_INT24_S), and nothing else. */
+
+static bool datatype_valid(soxr_datatype_t t)
+{
+  unsigned const type = (unsigned)t & ~(unsigned)SOXR_SPLIT;
+  return type <= (unsigned)SOXR_INT16 || type == (unsigned)SOXR_INT24;
+}
+
+
+
+/* The linear full-scale value of an integer sample-type: a sample value is
+ * converted to/from the internal representation by dividing/multiplying by
+ * this figure (see its use in soxr_create). */
+
+static double datatype_full_scale(soxr_datatype_t t)
+{
+  switch ((unsigned)t & ~(unsigned)SOXR_SPLIT) {
+    case SOXR_INT32: return 65536. * 32768;
+    case SOXR_INT24: return 256. * 32768;
+    case SOXR_INT16: return 32768.;
+    default: return 1;
+  }
+}
+
+
+
 soxr_io_spec_t soxr_io_spec(
   soxr_datatype_t itype,
   soxr_datatype_t otype)
 {
   soxr_io_spec_t spec, * p = &spec;
   memset(p, 0, sizeof(*p));
-  if ((itype | otype) >= SOXR_SPLIT * 2)
+  if (!datatype_valid(itype) || !datatype_valid(otype))
     p->e = "invalid io datatype(s)";
   else {
     p->itype = itype;
@@ -367,7 +395,6 @@ soxr_t soxr_create(
 {
   double io_ratio = output_rate!=0? input_rate!=0?
     input_rate / output_rate : -1 : input_rate!=0? -1 : 0;
-  static const float datatype_full_scale[] = {1, 1, 65536.*32768, 32768};
   soxr_t p = 0;
   soxr_error_t error = 0;
 
@@ -390,7 +417,9 @@ soxr_t soxr_create(
 #endif
 
   if (q_spec && q_spec->e)  error = q_spec->e;
-  else if (io_spec && (io_spec->itype | io_spec->otype) >= SOXR_SPLIT * 2)
+  else if (io_spec && io_spec->e) error = io_spec->e;
+  else if (io_spec && (!datatype_valid(io_spec->itype) ||
+                       !datatype_valid(io_spec->otype)))
     error = "invalid io datatype(s)";
 
   if (!error && !(p = calloc(sizeof(*p), 1))) error = "malloc failed";
@@ -425,8 +454,8 @@ soxr_t soxr_create(
     runtime_flag("SOXR_STRICT_BUF", 1, 2, &p->runtime_spec.flags);
     runtime_flag("SOXR_NOSMALLINTOPT", 1, 3, &p->runtime_spec.flags);
 
-    p->io_spec.scale *= datatype_full_scale[p->io_spec.otype & 3] /
-                        datatype_full_scale[p->io_spec.itype & 3];
+    p->io_spec.scale *= datatype_full_scale(p->io_spec.otype) /
+                        datatype_full_scale(p->io_spec.itype);
 
     p->seed = (unsigned long)time(0) ^ (unsigned long)(size_t)p;
 

@@ -7,6 +7,8 @@
 
 #include "data-io.h"
 #include "internal.h"
+#include "int24.h" /* Includes rint.h, so before the rint-clip includes. */
+
 
 
 
@@ -21,6 +23,18 @@
   *src0 = src; \
 } while (0)
 
+#define DEINTERLEAVE_FROM_INT24 do { \
+  unsigned i; \
+  size_t j; \
+  unsigned char const * src = *src0; \
+  if (ch > 1) for (j = 0; j < n; ++j) \
+    for (i = 0; i < ch; ++i, src += 3) \
+      dest[i][j] = (DEINTERLEAVE_TO)soxr_int24_get(src); \
+  else for (j = 0; j < n; ++j, src += 3) \
+    dest[0][j] = (DEINTERLEAVE_TO)soxr_int24_get(src); \
+  *src0 = src; \
+} while (0)
+
 
 
 #if WITH_CR64 || WITH_CR64S
@@ -28,11 +42,12 @@ void _soxr_deinterleave(double * * dest, /* Round/clipping not needed here */
     soxr_datatype_t data_type, void const * * src0, size_t n, unsigned ch)
 {
 #define DEINTERLEAVE_TO double
-  switch (data_type & 3) {
+  switch ((unsigned)data_type & ~(unsigned)SOXR_SPLIT) {
     case SOXR_FLOAT32: DEINTERLEAVE_FROM(float, 0); break;
     case SOXR_FLOAT64: DEINTERLEAVE_FROM(double, 1); break;
     case SOXR_INT32:   DEINTERLEAVE_FROM(int32_t, 0); break;
     case SOXR_INT16:   DEINTERLEAVE_FROM(int16_t, 0); break;
+    case SOXR_INT24:   DEINTERLEAVE_FROM_INT24; break;
     default: break;
   }
 }
@@ -46,11 +61,12 @@ void _soxr_deinterleave_f(float * * dest, /* Round/clipping not needed here */
 {
 #undef DEINTERLEAVE_TO
 #define DEINTERLEAVE_TO float
-  switch (data_type & 3) {
+  switch ((unsigned)data_type & ~(unsigned)SOXR_SPLIT) {
     case SOXR_FLOAT32: DEINTERLEAVE_FROM(float, 1); break;
     case SOXR_FLOAT64: DEINTERLEAVE_FROM(double, 0); break;
     case SOXR_INT32:   DEINTERLEAVE_FROM(int32_t, 0); break;
     case SOXR_INT16:   DEINTERLEAVE_FROM(int16_t, 0); break;
+    case SOXR_INT24:   DEINTERLEAVE_FROM_INT24; break;
     default: break;
   }
 }
@@ -170,17 +186,40 @@ void _soxr_deinterleave_f(float * * dest, /* Round/clipping not needed here */
   return 0; \
 } while (0)
 
+/* `src' is the function's (typed) array of channel buffers.  Rounding and
+ * saturation are per soxr_int24_rint_clip, i.e. as for the 32-bit path.
+ * (No dithering: as for INT32, which is only dithered for INT16 output.) */
+
+#define INTERLEAVE_INT24 do { \
+  unsigned i; \
+  size_t j, clips = 0; \
+  unsigned char * dest = *dest0; \
+  if (ch > 1) \
+  for (j = 0; j < n; ++j) for (i = 0; i < ch; ++i) { \
+    soxr_int24_put(dest, soxr_int24_rint_clip((double)src[i][j], &clips)); \
+    dest += 3; \
+  } \
+  else for (j = 0; j < n; ++j) { \
+    soxr_int24_put(dest, soxr_int24_rint_clip((double)src[0][j], &clips)); \
+    dest += 3; \
+  } \
+  *dest0 = dest; \
+  return clips; \
+} while (0)
+
 #if WITH_CR64 || WITH_CR64S
 size_t /* clips */ _soxr_interleave(soxr_datatype_t data_type, void * * dest0,
   double const * const * src, size_t n, unsigned ch, unsigned long * seed)
 {
-  switch (data_type & 3) {
+  switch ((unsigned)data_type & ~(unsigned)SOXR_SPLIT) {
     case SOXR_FLOAT32: INTERLEAVE_TO(float, 0);
     case SOXR_FLOAT64: INTERLEAVE_TO(double, 1);
 
     case SOXR_INT32: if (ch == 1)
         return lsx_rint32_clip(dest0, src[0], n);
       return lsx_rint32_clip_2(dest0, src, ch, n);
+
+    case SOXR_INT24: INTERLEAVE_INT24;
 
     case SOXR_INT16: if (seed) {
       if (ch == 1)
@@ -200,13 +239,15 @@ size_t /* clips */ _soxr_interleave(soxr_datatype_t data_type, void * * dest0,
 size_t /* clips */ _soxr_interleave_f(soxr_datatype_t data_type, void * * dest0,
   float const * const * src, size_t n, unsigned ch, unsigned long * seed)
 {
-  switch (data_type & 3) {
+  switch ((unsigned)data_type & ~(unsigned)SOXR_SPLIT) {
     case SOXR_FLOAT32: INTERLEAVE_TO(float, 1);
     case SOXR_FLOAT64: INTERLEAVE_TO(double, 0);
 
     case SOXR_INT32: if (ch == 1)
         return lsx_rint32_clip_f(dest0, src[0], n);
       return lsx_rint32_clip_2_f(dest0, src, ch, n);
+
+    case SOXR_INT24: INTERLEAVE_INT24;
 
     case SOXR_INT16: if (seed) {
       if (ch == 1)
