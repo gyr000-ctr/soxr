@@ -8,6 +8,7 @@
 
 #include "soxr.h"
 #include "data-io.h"
+#include "data-types.h"
 #include "internal.h"
 
 #if AVUTIL_FOUND
@@ -88,6 +89,12 @@ struct soxr {
   size_t clips;
   unsigned long seed;
   int flushing;
+
+  /* Scratch used when the caller's input and output buffers overlap: a
+   * copy of the input is staged here so that resampling (which is not
+   * defined for overlapping in/out) always sees distinct buffers. */
+  void * staging;
+  size_t staging_size;
 };
 
 
@@ -502,6 +509,7 @@ static void soxr_delete0(soxr_t p)
   free(p->resamplers);
   free(p->channel_ptrs);
   free(p->shared);
+  free(p->staging);
 
   memset(p, 0, sizeof(*p));
 }
@@ -634,7 +642,7 @@ static size_t soxr_input(soxr_t p, void const * in, size_t len)
   bool separated = !!(p->io_spec.itype & SOXR_SPLIT);
   unsigned i;
   if (!p || p->error) return 0;
-  if (!in && len) {p->error = "null input buffer pointer"; return 0;}
+  if (!in && len) {p->error = SOXR_EBADPTR; return 0;}
   if (!len) {
     p->flushing = true;
     return 0;
@@ -704,7 +712,7 @@ size_t soxr_output(soxr_t p, void * out, size_t len0)
   bool was_flushing;
 
   if (!p || p->error) return 0;
-  if (!out && len0) {p->error = "null output buffer pointer"; return 0;}
+  if (!out && len0) {p->error = SOXR_EBADPTR; return 0;}
 
   do {
     odone = soxr_output_no_callback(p, out, olen);
@@ -750,6 +758,140 @@ static size_t soxr_o_for_i(soxr_t p, size_t ilen, size_t olen)
 
 
 
+/* soxr_process is not defined for overlapping input and output buffers, so
+ * such calls are made safe by staging: the input is copied into private
+ * storage before any output is produced.  Calls whose buffers do not overlap
+ * take no allocation at all. */
+
+static bool soxr_io_size(soxr_t p, soxr_datatype_t data_type,
+    size_t len, size_t * size)
+{
+  size_t bytes = soxr_datatype_size(data_type);
+  return soxr_size_mul(bytes, p->num_channels, size)
+      && soxr_size_mul(*size, len, size);
+}
+
+
+
+/* One channel's buffer address; `buf' is either the whole (interleaved)
+ * buffer or the array of per-channel buffers, depending on `data_type'. */
+
+static void const * soxr_io_cptr(soxr_datatype_t data_type,
+    void const * buf, unsigned i)
+{
+  return (data_type & SOXR_SPLIT)? ((soxr_cbufs_t)buf)[i] : buf;
+}
+
+
+
+static void * soxr_io_ptr(soxr_datatype_t data_type, void * buf, unsigned i)
+{
+  return (data_type & SOXR_SPLIT)? ((soxr_bufs_t)buf)[i] : buf;
+}
+
+
+
+/* Determine, without touching the resampler's state, whether the input and
+ * output buffers overlap.  ilen and olen are the lengths (samples per
+ * channel) that the call may span.  Split buffers are compared
+ * channel-by-channel; a null channel pointer is reported as a bad pointer. */
+
+static soxr_error_t soxr_io_overlap(soxr_t p, void const * in, size_t ilen,
+    void * out, size_t olen, soxr_overlap_t * overlap)
+{
+  soxr_overlap_t worst = SOXR_NO_OVERLAP;
+  size_t isize, osize, ich, och;
+  unsigned i, j;
+
+  *overlap = SOXR_NO_OVERLAP;
+  if (!p->num_channels)
+    return 0;
+  if (!soxr_io_size(p, p->io_spec.itype, ilen, &isize)
+      || !soxr_io_size(p, p->io_spec.otype, olen, &osize))
+    return SOXR_EBADPTR;
+  if (!isize || !osize)
+    return 0;
+  ich = isize / p->num_channels;
+  och = osize / p->num_channels;
+
+  /* Every channel pointer is checked even when its length is zero, so that
+   * a malformed split buffer is always reported. */
+  for (i = 0; i < p->num_channels; ++i)
+    if (!soxr_io_cptr(p->io_spec.itype, in, i))
+      return SOXR_EBADPTR;
+  for (j = 0; j < p->num_channels; ++j)
+    if (!soxr_io_ptr(p->io_spec.otype, out, j))
+      return SOXR_EBADPTR;
+
+  for (i = 0; i < p->num_channels; ++i) {
+    void const * iptr = soxr_io_cptr(p->io_spec.itype, in, i);
+    for (j = 0; j < p->num_channels; ++j) {
+      soxr_overlap_t o = soxr_overlap(iptr, ich,
+          soxr_io_ptr(p->io_spec.otype, out, j), och);
+      if (o > worst)
+        worst = o;
+    }
+  }
+  *overlap = worst;
+  return 0;
+}
+
+
+
+/* Copy the (possibly split) input into private storage.  Storage is grown
+ * only when this staging path is actually used.  For split input, the
+ * staged pointer array is what the resampler's deinterleave step reads. */
+
+static soxr_error_t soxr_stage_input(soxr_t p, void const * in, size_t ilen,
+    void const * * staged)
+{
+  size_t chan_bytes, data_bytes, ptr_bytes = 0, offset = 0, total;
+  bool split = !!(p->io_spec.itype & SOXR_SPLIT);
+  char * base;
+  unsigned i;
+
+  if (!soxr_size_mul(soxr_datatype_size(p->io_spec.itype), ilen, &chan_bytes)
+      || !soxr_size_mul(chan_bytes, p->num_channels, &data_bytes))
+    return SOXR_EBADPTR;
+  if (split) {
+    if (!soxr_size_mul(sizeof(void *), p->num_channels, &ptr_bytes)
+        || !soxr_size_align(ptr_bytes, &offset)
+        || !soxr_size_add(offset, data_bytes, &total))
+      return SOXR_EBADPTR;
+  }
+  else
+    total = data_bytes;
+
+  if (total > p->staging_size) {
+    void * grown = realloc(p->staging, total);
+    if (!grown)
+      return "malloc failed";
+    p->staging = grown;
+    p->staging_size = total;
+  }
+  base = p->staging;
+
+  if (!split) {
+    if (data_bytes)
+      memcpy(base, in, data_bytes);
+    *staged = base;
+    return 0;
+  }
+  for (i = 0; i < p->num_channels; ++i) {
+    void const * src = soxr_io_cptr(p->io_spec.itype, in, i);
+    void * dest = base + offset + (size_t)i * chan_bytes;
+    if (!src)
+      return SOXR_EBADPTR;
+    if (chan_bytes)
+      memcpy(dest, src, chan_bytes);
+    ((void * *)base)[i] = dest;
+  }
+  *staged = base;
+  return 0;
+}
+
+
+
 soxr_error_t soxr_process(soxr_t p,
     void const * in , size_t ilen0, size_t * idone0,
     void       * out, size_t olen , size_t * odone0)
@@ -771,6 +913,25 @@ soxr_error_t soxr_process(soxr_t p,
       ilen = ilen0/*, olen = soxr_o_for_i(p, ilen, olen)*/;
   }
   p->flushing |= ilen == ilen0 && flush_requested;
+
+  /* Validate and, if necessary, de-alias the buffers before any input is
+   * consumed: soxr_process is not defined for overlapping in/out, and this
+   * also catches a null per-channel pointer in a split buffer early. */
+  if (in && out && !p->error) {
+    soxr_overlap_t overlap;
+    soxr_error_t error = soxr_io_overlap(p, in, ilen, out, olen, &overlap);
+    if (!error && overlap && ilen) { /* In-place or partial overlap. */
+      void const * staged;
+      error = soxr_stage_input(p, in, ilen, &staged);
+      if (!error)
+        in = staged;
+    }
+    if (error) {
+      if (idone0) *idone0 = 0;
+      if (odone0) *odone0 = 0;
+      return p->error = error;
+    }
+  }
 
   if (!out && !in)
     idone = ilen;
