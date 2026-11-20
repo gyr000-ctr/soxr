@@ -309,6 +309,7 @@ fn_t RATE_CB[] = {
   (fn_t)rate_create,
   (fn_t)0,
   (fn_t)id,
+  (fn_t)_soxr_output_length,
 };
 
 #endif

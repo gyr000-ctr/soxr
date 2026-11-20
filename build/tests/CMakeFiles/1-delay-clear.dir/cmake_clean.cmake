@@ -1,0 +1,12 @@
+file(REMOVE_RECURSE
+  "CMakeFiles/1-delay-clear.dir/link.d"
+  "1-delay-clear"
+  "1-delay-clear.pdb"
+  "CMakeFiles/1-delay-clear.dir/1-delay-clear.c.o"
+  "CMakeFiles/1-delay-clear.dir/1-delay-clear.c.o.d"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang C)
+  include(CMakeFiles/1-delay-clear.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

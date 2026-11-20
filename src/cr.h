@@ -173,6 +173,7 @@ void _soxr_flush(struct rate * p);
 void _soxr_close(struct rate * p);
 double _soxr_delay(struct rate * p);
 void _soxr_sizes(size_t * shared, size_t * channel);
+char const * _soxr_output_length(struct rate * p, size_t ilen, size_t * olen);
 #endif
 
 #endif

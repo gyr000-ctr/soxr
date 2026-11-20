@@ -1,3 +1,8 @@
+Version 0.1.4 (xxxx-xx-xx)
+  * Add soxr_output_length(): exact query of the number of output samples
+    remaining (incl. filter delay & flush tail) for a given amount of further
+    input followed by end-of-input.
+
 Version 0.1.3 (2018-02-24)
   * SIMD enhancements: SSE, AVX, Neon.
   * Improve support for clang, ARM, and cross-compilation.

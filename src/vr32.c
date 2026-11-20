@@ -614,6 +614,94 @@ static double vr_delay(rate_t * p)
   (void)p;
 }
 
+static int fifo_copy(fifo_t * dest, fifo_t const * src)
+{
+  dest->data = 0;
+  if (src->allocation) {
+    if (!(dest->data = (char *)malloc(src->allocation)))
+      return -1;
+    memcpy(dest->data, src->data, src->allocation);
+  }
+  return 0;
+}
+
+static void relocate_input(stream_t * s, rate_t const * p, rate_t * c)
+{
+  if (s->input) /* Points into stages[stage_num].fifo; keep the same offset: */
+    s->input = (float const *)(c->stages[s->stage_num].fifo.data +
+      ((char const *)s->input - (char const *)p->stages[s->stage_num].fifo.data));
+}
+
+static rate_t * vr_clone(rate_t const * p)
+{
+  rate_t * c = (rate_t *)malloc(sizeof(*c));
+  stage_t * stages;
+  int i;
+  if (!c)
+    return 0;
+  *c = *p;
+  if (!(stages = (stage_t *)malloc((size_t)(p->num_stages + 1) * sizeof(*stages)))) {
+    free(c);
+    return 0;
+  }
+  memcpy(stages, p->stages - 1, (size_t)(p->num_stages + 1) * sizeof(*stages));
+  c->stages = stages + 1;
+  c->output_fifo.data = 0;
+  for (i = -1; i < c->num_stages; ++i) /* Don't alias p's buffers on failure: */
+    c->stages[i].fifo.data = 0;
+  for (i = -1; i < c->num_stages; ++i)
+    if (fifo_copy(&c->stages[i].fifo, &p->stages[i].fifo))
+      goto fail;
+  if (fifo_copy(&c->output_fifo, &p->output_fifo))
+    goto fail;
+  relocate_input(&c->current, p, c);
+  relocate_input(&c->fadeout, p, c);
+  return c;
+fail:
+  vr_close(c);
+  free(c);
+  return 0;
+}
+
+static char const * vr_output_length(rate_t * p, size_t ilen, size_t * olen)
+{
+  /* The number of samples output does not depend on sample values, so the
+   * exact output length can be determined by resampling dummy input through
+   * to end-of-input, using a copy of the current state: */
+  char const * error = 0;
+  rate_t * c = vr_clone(p);
+  size_t total = 0;
+  if (!c)
+    return "out of memory";
+  while (ilen && !error) {
+    size_t n = min(ilen, (size_t)1 << 24);
+    float * dummy = vr_input(c, 0, n);
+    if (dummy)
+      memset(dummy, 0, n * sizeof(*dummy)), ilen -= n;
+    else error = "out of memory";
+  }
+  if (!error) {
+    vr_flush(c);
+    for (;;) {
+      size_t n = 65536;
+      vr_process(c, 65536);
+      vr_output(c, 0, &n);
+      if (n > (size_t)-1 - total) {
+        error = "output length too large";
+        break;
+      }
+      total += n;
+      if (!n)
+        break;
+    }
+  }
+  vr_close(c);
+  free(c);
+  if (!error)
+    *olen = total;
+  return error;
+}
+
 static void vr_sizes(size_t * shared, size_t * channel)
 {
   *shared = 0;
@@ -648,4 +736,5 @@ fn_t _soxr_vr32_cb[] = {
   (fn_t)vr_create,
   (fn_t)vr_set_io_ratio,
   (fn_t)vr_id,
+  (fn_t)vr_output_length,
 };

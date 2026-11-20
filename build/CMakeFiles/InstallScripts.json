@@ -1,0 +1,10 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/gyr/feedback/uid26098/build/cmake_install.cmake",
+		"/home/gyr/feedback/uid26098/build/src/cmake_install.cmake",
+		"/home/gyr/feedback/uid26098/build/tests/cmake_install.cmake",
+		"/home/gyr/feedback/uid26098/build/examples/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

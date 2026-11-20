@@ -46,7 +46,7 @@ char const * soxr_version(void)
 
 typedef void sample_t; /* float or double */
 typedef void (* fn_t)(void);
-typedef fn_t control_block_t[10];
+typedef fn_t control_block_t[11];
 
 #define resampler_input        (*(sample_t * (*)(void *, sample_t * samples, size_t   n))p->control_block[0])
 #define resampler_process      (*(void (*)(void *, size_t))p->control_block[1])
@@ -58,6 +58,7 @@ typedef fn_t control_block_t[10];
 #define resampler_create       (*(char const * (*)(void * channel, void * shared, double io_ratio, soxr_quality_spec_t * q_spec, soxr_runtime_spec_t * r_spec, double scale))p->control_block[7])
 #define resampler_set_io_ratio (*(void (*)(void *, double io_ratio, size_t len))p->control_block[8])
 #define resampler_id           (*(char const * (*)(void))p->control_block[9])
+#define resampler_output_length (*(soxr_error_t (*)(void *, size_t ilen, size_t * olen))p->control_block[10])
 
 typedef void * resampler_t; /* For one channel. */
 typedef void * resampler_shared_t; /* Between channels. */
@@ -512,6 +513,17 @@ double soxr_delay(soxr_t p)
 {
   return
     (p && !p->error && p->resamplers)? resampler_delay(p->resamplers[0]) : 0;
+}
+
+
+
+soxr_error_t soxr_output_length(soxr_t p, size_t ilen, size_t * olen)
+{
+  if (!p || !olen)         return "null pointer";
+  if (p->error)            return p->error;
+  if (!p->resamplers)      return "O/I ratio not yet set";
+  if (p->flushing && ilen) return "end-of-input already indicated";
+  return resampler_output_length(p->resamplers[0], ilen, olen);
 }
 
 

@@ -175,6 +175,36 @@ SOXR size_t   * soxr_num_clips(soxr_t); /* Query int. clip counter (for R/W). */
 SOXR double     soxr_delay(soxr_t);  /* Query current delay in output samples.*/
 SOXR char const * soxr_engine(soxr_t);  /* Query resampling engine name. */
 
+/* Determine the exact number of output samples (per channel) that the
+ * resampler will produce if `ilen' further input samples (per channel) are
+ * supplied, followed by end-of-input.  The figure includes samples currently
+ * delayed in the resampler's filter(s) and the tail produced when flushing,
+ * and takes into account the resampling ratio (rational or otherwise) and
+ * any variable-rate changes made so far; it is exact: the number of samples
+ * subsequently output by soxr_process/soxr_output is guaranteed to equal it
+ * (but see the variable-rate note below).
+ *
+ * On success, 0 is returned and the figure is stored at `olen'; on failure,
+ * `olen' is not modified and one of the following (distinguishable) errors
+ * is returned (or the resampler's existing error state, if any):
+ *
+ *   "null pointer"                    resampler and/or olen is NULL
+ *   "O/I ratio not yet set"           soxr_set_io_ratio has not been called
+ *   "end-of-input already indicated"  ilen != 0 after end-of-input
+ *   "output length too large"         the figure is not representable
+ *
+ * N.B. for a variable-rate (SOXR_VR) resampler, the cost of this function is
+ * proportional to ilen, and, if the I/O ratio has been changed mid-stream
+ * (soxr_set_io_ratio), the figure is exact for the case that all remaining
+ * input is supplied in a single block: with further arbitrary input
+ * blocking, the engine's actual output count may differ slightly (the vr32
+ * engine's count is itself sensitive to input blocking in this case). */
+
+SOXR soxr_error_t soxr_output_length(
+    soxr_t      resampler,      /* As returned by soxr_create. */
+    size_t      ilen,           /* # further input samples (per channel). */
+    size_t      * olen);        /* To return exact # of output samples. */
+
 SOXR soxr_error_t soxr_clear(soxr_t); /* Ready for fresh signal, same config. */
 SOXR void         soxr_delete(soxr_t);  /* Free resources. */
 

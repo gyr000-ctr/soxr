@@ -1,0 +1,1 @@
+/usr/bin/cc  -fopenmp  -Wconversion -Wall -Wextra       -pedantic -Wundef -Wpointer-arith -Wno-long-long        -std=gnu89 -Wnested-externs -Wmissing-prototypes -Wstrict-prototypes -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/throughput.dir/link.d CMakeFiles/throughput.dir/throughput.c.o -o throughput  -Wl,-rpath,/home/gyr/feedback/uid26098/build/src ../src/libsoxr.so.0.2.0 -lm

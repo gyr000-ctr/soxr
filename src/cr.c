@@ -580,6 +580,32 @@ STATIC double _soxr_delay(rate_t * p)
   return (double)p->samples_in / p->io_ratio - (double)p->samples_out;
 }
 
+STATIC char const * _soxr_output_length(rate_t * p, size_t ilen, size_t * olen)
+{
+  int64_t const int64_max = (int64_t)(~(uint64_t)0 >> 1);
+  double total;
+  if (p->flushing) { /* samples_out (now -ve) counts the samples still owed. */
+    if (ilen)
+      return "end-of-input already indicated";
+    *olen = (size_t)-p->samples_out;
+    return 0;
+  }
+  if (ilen > (size_t)(int64_max - p->samples_in))
+    return "output length too large";
+  /* The same expression as used by _soxr_flush, evaluated as it will be when
+   * flushing (i.e. after all ilen samples have been input): */
+  total = (double)(p->samples_in + (int64_t)ilen) / p->io_ratio + .5;
+  if (!(total < 9223372036854775808.)) /* 2^63; catches +inf & NaN too. */
+    return "output length too large";
+  {
+    int64_t remaining = (int64_t)total - p->samples_out;
+    if ((uint64_t)remaining > (uint64_t)(size_t)-1)
+      return "output length too large";
+    *olen = (size_t)remaining;
+  }
+  return 0;
+}
+
 STATIC void _soxr_sizes(size_t * shared, size_t * channel)
 {
   *shared = sizeof(rate_shared_t);

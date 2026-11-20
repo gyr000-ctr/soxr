@@ -21,9 +21,9 @@ set (PROJECT_VERSION_PATCH 3)
 #   3) interfaces added:            ++age
 #   4) interfaces removed:          age = 0
 
-set (SO_VERSION_CURRENT  1)
-set (SO_VERSION_REVISION 2)
-set (SO_VERSION_AGE      1)
+set (SO_VERSION_CURRENT  2)
+set (SO_VERSION_REVISION 0)
+set (SO_VERSION_AGE      2)
 
 math (EXPR SO_VERSION_MAJOR "${SO_VERSION_CURRENT} - ${SO_VERSION_AGE}")
 math (EXPR SO_VERSION_MINOR "${SO_VERSION_AGE}")
